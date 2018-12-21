@@ -211,6 +211,9 @@ int main(int argc, char *argv[])
         if (runTime.outputTime())
         {
             thermo.tauQGD().write();
+	    U.write();
+	    T.write();
+	    p.write();
         }
 	
 
