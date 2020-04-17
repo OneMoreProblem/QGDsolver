@@ -2,8 +2,10 @@
   =========                 |
   \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
    \\    /   O peration     |
-    \\  /    A nd           | Copyright (C) 2011-2015 OpenFOAM Foundation
-     \\/     M anipulation  |
+    \\  /    A nd           | Copyright (C) 2011-2018 OpenFOAM Foundation
+     \\/     M anipulation  | Copyright (C) 2016-2018 OpenCFD Ltd.
+-------------------------------------------------------------------------------
+                QGDsolver   | Copyright (C) 2016-2018 ISP RAS (www.unicfd.ru)
 -------------------------------------------------------------------------------
 License
     This file is part of OpenFOAM.
@@ -25,34 +27,58 @@ Application
     QGDFoam
 
 Description
-    Density-based compressible flow solver based on central-upwind schemes of
-    Kurganov and Tadmor
+    Solver for unsteady 3D turbulent flow of perfect gas governed by
+    quasi-gas dynamic (QGD) equations at high Mach numbers (from 2 to
+    infinity).
+
+    QGD system of equations has been developed by scientific group from
+    Keldysh Institute of Applied Mathematics,
+    see http://elizarova.imamod.ru/selection-of-papers.html
+
+    A comprehensive description of QGD equations and their applications
+    can be found here:
+    \verbatim
+    Elizarova, T.G.
+    "Quasi-Gas Dynamic equations"
+    Springer, 2009
+    \endverbatim
+
+    A brief of theory on QGD and QHD system of equations:
+    \verbatim
+    Elizarova, T.G. and Sheretov, Y.V.
+    "Theoretical and numerical analysis of quasi-gasdynamic and quasi-hydrodynamic
+    equations"
+    J. Computational Mathematics and Mathematical Physics, vol. 41, no. 2, pp 219-234,
+    2001
+    \endverbatim
+
+    Developed by UniCFD group (www.unicfd.ru) of ISP RAS (www.ispras.ru).
+
 
 \*---------------------------------------------------------------------------*/
 
 #include "fvCFD.H"
-#include "psiThermo.H"
-#include "turbulenceModel.H"
-#include "zeroGradientFvPatchFields.H"
-#include "fixedRhoFvPatchScalarField.H"
-#include "directionInterpolate.H"
+#include "QGD.H"
+#include "fvOptions.H"
+#include "turbulentFluidThermoModel.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 int main(int argc, char *argv[])
 {
-    #include "setRootCase.H"
+    #define NO_CONTROL
+    #include "postProcess.H"
 
+    #include "setRootCase.H"
     #include "createTime.H"
     #include "createMesh.H"
     #include "createFields.H"
-    #include "readTimeControls.H"
+    #include "createFaceFields.H"
+    #include "createFaceFluxes.H"
+    #include "createTimeControls.H"
+    #include "createFvOptions.H"
 
     // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
-
-    #include "readFluxScheme.H"
-
-    dimensionedScalar v_zero("v_zero", dimVolume/dimTime, 0.0);
 
     // Courant numbers used to adjust the time-step
     scalar CoNum = 0.0;
@@ -62,239 +88,72 @@ int main(int argc, char *argv[])
 
     while (runTime.run())
     {
-        // --- Directed interpolation of primitive fields onto faces
+        /*
+         *
+         * Update QGD viscosity
+         *
+         */
+        turbulence->correct();
 
-//      rho
-        surfaceScalarField rho_pos(interpolate(rho, pos));
-        surfaceScalarField rho_neg(interpolate(rho, neg));
-        surfaceScalarField rho_int ("rho_int",fvc::interpolate(rho));
+        /*
+         *
+         * Update fields
+         *
+         */
+        #include "updateFields.H"
 
-//      U
-        surfaceVectorField U_int = fvc::interpolate(U);
+        /*
+         *
+         * Update fluxes
+         *
+         */
+        #include "updateFluxes.H"
 
-//      rho * U
-        surfaceVectorField rhoU_pos(interpolate(rhoU, pos, U.name()));
-        surfaceVectorField rhoU_neg(interpolate(rhoU, neg, U.name()));
-        surfaceVectorField rhoU_int = fvc::interpolate(rhoU);
-
-//      p
-        surfaceScalarField p_int = fvc::interpolate(p);
-        volVectorField gradP("gradP", fvc::grad(p));
-        surfaceVectorField gradP_int ("gradPint", fvc::interpolate(gradP));
-
-// from rhoCentralFOAM
-        volScalarField rPsi("rPsi", 1.0/psi);
-        surfaceScalarField rPsi_int = fvc::interpolate(rPsi);
-        surfaceScalarField psi_int = fvc::interpolate(psi);
-
-        surfaceVectorField U_pos("U_pos", rhoU_pos/rho_pos);
-        surfaceVectorField U_neg("U_neg", rhoU_neg/rho_neg);
-
-        surfaceScalarField phiv_pos("phiv_pos", U_pos & mesh.Sf());
-        surfaceScalarField phiv_neg("phiv_neg", U_neg & mesh.Sf());
-
-//      flux throught the faces --- ???
-        surfaceScalarField phiv_int("phiv_int", U_int & mesh.Sf());
-
-        volScalarField c("c", sqrt(thermo.Cp()/thermo.Cv()*rPsi));
-        surfaceScalarField cSf_pos
-        (
-            "cSf_pos",
-            interpolate(c, pos, T.name())*mesh.magSf()
-        );
-        surfaceScalarField cSf_neg
-        (
-            "cSf_neg",
-            interpolate(c, neg, T.name())*mesh.magSf()
-        );
-        
-        
-
-        surfaceScalarField ap
-        (
-            "ap",
-            max(max(phiv_pos + cSf_pos, phiv_neg + cSf_neg), v_zero)
-        );
-        surfaceScalarField am
-        (
-            "am",
-            min(min(phiv_pos - cSf_pos, phiv_neg - cSf_neg), v_zero)
-        );
-
-        surfaceScalarField amaxSf("amaxSf", max(mag(am), mag(ap)));
-// end from rhoCentralFOAM
-
-//      for QGD
-//      c
-        surfaceScalarField c_int ("c_int", fvc::interpolate(c));
-        c.write();
-        c_int.write();
-//      h
-        surfaceScalarField hQGD = 1.0 / mesh.surfaceInterpolation::deltaCoeffs();
-//      tau
-        surfaceScalarField tauQGD_int("tauQGD", 0.5 * hQGD / c_int);
-//      end for QGD
-
-// ******************************************************************* //
-
-        #include "centralCourantNo.H"
+        /*
+         *
+         * Update time step
+         *
+         */
         #include "readTimeControls.H"
-        #include "setDeltaT.H"
+        #include "QGDCourantNo.H"
+        #include "setDeltaT-QGDQHD.H"
 
         runTime++;
 
         Info<< "Time = " << runTime.timeName() << nl << endl;
 
-// 1. Solve the density equation:
-//   \[
-//      \frac{\partial \rho}{\partial t} + \nabla \cdot (\rho U + \rho W),\\
-//      where \rho W = \tau \nabla \cdot (\rho U \times U + I p) = \tau (\nabla \cdot (\rho U \times U) + \grad p),
-//            \tau = \alpha \frac{h}{c}, \quad \alpha = 0.5.
-//   \]
-//
-// - Calculate the mass flux throught faces:
-//   \[
-//      (\rho U \times U) \cdot S_f.
-//   \]
-// - Find the divergence of mass flux and interpolate it to face centers.
-// - Find the pressure gradient field.
-// - Find the $\tau$ (tau_QGD).
-// - Find the $\rho W$ as sum of the divergence of mass flux and pressure gradient.
-// - Multiply $\rho W$ to $S_f$ (scalar product) and to $\tau$.
-// - Solve density equation and find density.
-
-        phi = phiv_int*rho_int;
-
-        surfaceVectorField phiU = U_int * phi;
-
-        volVectorField divPhiU = fvc::div(phiU);
-        surfaceVectorField divPhiU_int = fvc::interpolate(divPhiU);
-
-        surfaceScalarField rhoW1 = divPhiU_int & mesh.Sf();
-        rhoW1 *= tauQGD_int;
-
-        surfaceScalarField rhoW2 = gradP_int & mesh.Sf();
-        rhoW2 *= tauQGD_int;
-
-        surfaceScalarField rhoW("rhoW", rhoW1 + rhoW2);
-        
-        surfaceVectorField rhoWW("rhoWW", (divPhiU_int + gradP_int) * tauQGD_int);
-        
+        // --- Store old time values
+        rho.oldTime();
+        rhoU.oldTime();
+        U.oldTime();
+        rhoE.oldTime();
+        e.oldTime();
 
         // --- Solve density
-        solve(fvm::ddt(rho) + fvc::div(phi)
-        - fvc::div(rhoW)
-        );
-
-rhoWW.write();
-tauQGD_int.write();
-gradP_int.write();
-rho_int.write();
-
-//  *********************** //
-
-        surfaceVectorField phiUp
-        (
-            phiv_int*rhoU_int
-          + p_int*mesh.Sf()
-        );
-
-        surfaceVectorField phiW
-        (
-            phiv_int * (divPhiU_int + gradP_int) * tauQGD_int
-        );
+        #include "QGDRhoEqn.H"
 
         // --- Solve momentum
-        solve(fvm::ddt(rhoU) + fvc::div(phiUp));
-        solve(fvm::ddt(rhoU) + fvc::div(phiUp) 
-         -fvc::div(phiW)
-         );
+        #include "QGDUEqn.H"
 
-//      Correct velocity
-//        U.dimensionedInternalField() =
-//            rhoU.dimensionedInternalField()
-//           /rho.dimensionedInternalField();
-//        U.correctBoundaryConditions();
-//        rhoU.boundaryField() = rho.boundaryField()*U.boundaryField();
-// ********************** //
+        //--- Solve energy
+        #include "QGDEEqn.H"
 
-//        surfaceScalarField sigmaDotU
-//        (
-//            "sigmaDotU",
-//            (
-//                fvc::interpolate(muEff)*mesh.magSf()*fvc::snGrad(U)
-//              + (mesh.Sf() & fvc::interpolate(tauMC))
-//            )
-//            & (a_pos*U_pos + a_neg*U_neg)
-//        );
+        if ( (min(e).value() <= 0.0) || (min(rho).value() <= 0.0) )
+        {
+            U.write();
+            e.write();
+            rho.write();
+        }
 
-       surfaceScalarField e_int = fvc::interpolate(e);
+        thermo.correct();
 
-       surfaceScalarField phiEp
-       (
-           "phiEp",
-           phiv_int*(rho_int*(e_int + 0.5*magSqr(U_int)) + p_int)
-       );
+        // Correct pressure
+        p.ref() =
+            rho()
+           /psi();
+        p.correctBoundaryConditions();
+        rho.boundaryFieldRef() = psi.boundaryField()*p.boundaryField();
 
-     surfaceScalarField phiWE
-     (
-         "phiWE",
-         rhoW*(e_int + 0.5*magSqr(U_int) + (p_int / rho_int))
-     );
-
-/*       volScalarField gammam1 = thermo.Cp() / thermo.Cv() - 1.0;
-       surfaceScalarField gammam1_int = fvc::interpolate(gammam1);
-
-       surfaceScalarField Rq
-       (
-           "Rq",
-           (
-             ( U_int
-             &
-             fvc::interpolate(fvc::grad(p/rho))
-             )
-             /
-             gammam1_int
-             + 
-             ( p_int * ( U_int & fvc::interpolate(fvc::grad(1.0/rho)) ) )
-           )
-           * tauQGD_int * rho_int
-       );
-
-       surfaceScalarField phiURq = phiv_int * Rq;
-
-       surfaceScalarField kappaQGD = tauQGD_int * p_int /gammam1_int;
-       
-       surfaceVectorField qNS = fvc::interpolate(fvc::grad(p/rho));
-       */
-
-//       solve
-//       (
-//           fvm::ddt(rhoE)
-//         + fvc::div(phiEp)
-//         - fvc::div(phiWE)
-//       );
-
-//       e.correctBoundaryConditions();
-       
-       thermo.correct();
-       
-//       rhoE.boundaryField() =
-//           rho.boundaryField()*
-//           (
-//               e.boundaryField() + 0.5*magSqr(U.boundaryField())
-//           );
-
-//       p.dimensionedInternalField() =
-//           rho.dimensionedInternalField()
-//          /psi.dimensionedInternalField();
-//       p.correctBoundaryConditions();
-//       rho.boundaryField() = psi.boundaryField()*p.boundaryField();
-
-//       turbulence->correct();
-
-
-// *********************************************************************** //
         runTime.write();
 
         Info<< "ExecutionTime = " << runTime.elapsedCpuTime() << " s"

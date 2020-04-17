@@ -1,24 +1,26 @@
 Info<< "Reading thermophysical properties\n" << endl;
 
-autoPtr<psiThermo> pThermo
+autoPtr<psiQGDThermo> pThermo
 (
-    psiThermo::New(mesh)
+    psiQGDThermo::New(mesh)
 );
-psiThermo& thermo = pThermo();
+psiQGDThermo& thermo = pThermo();
+thermo.correct();
+
+volScalarField& e = thermo.he();
 
 volScalarField& p = thermo.p();
-volScalarField& e = thermo.he();
 const volScalarField& T = thermo.T();
+
+const surfaceScalarField& tauQGDf = thermo.tauQGDf();
+const surfaceScalarField& hQGDf   = thermo.hQGDf();
+const volScalarField& gamma = thermo.gamma();
 const volScalarField& psi = thermo.psi();
-//const volScalarField& mu = thermo.mu();
 
-//bool inviscid(true);
-//if (max(mu.internalField()) > 0.0)
-//{
-//    inviscid = false;
-//}
+Info << "Thermo corrected" << endl;
 
-Info<< "Reading field U\n" << endl;
+autoPtr<compressible::turbulenceModel> turbulence;
+
 volVectorField U
 (
     IOobject
@@ -32,7 +34,6 @@ volVectorField U
     mesh
 );
 
-#include "rhoBoundaryTypes.H"
 volScalarField rho
 (
     IOobject
@@ -43,11 +44,8 @@ volScalarField rho
         IOobject::NO_READ,
         IOobject::AUTO_WRITE
     ),
-    thermo.rho(),
-    rhoBoundaryTypes
+    thermo.rho()
 );
-
-rho.write();
 
 volVectorField rhoU
 (
@@ -72,44 +70,51 @@ volScalarField rhoE
         IOobject::NO_READ,
         IOobject::NO_WRITE
     ),
-    rho*(e + 0.5*magSqr(U))
+    rho*e + rho*0.5*magSqr(U)
 );
 
-surfaceScalarField pos
+volScalarField H
 (
     IOobject
     (
-        "pos",
+        "Ht",
         runTime.timeName(),
-        mesh
+        mesh,
+        IOobject::NO_READ,
+        IOobject::NO_WRITE
     ),
-    mesh,
-    dimensionedScalar("pos", dimless, 1.0)
+    (rhoE + p)/rho
 );
 
-surfaceScalarField neg
+surfaceScalarField phi
 (
-    IOobject
-    (
-        "neg",
-        runTime.timeName(),
-        mesh
-    ),
-    mesh,
-    dimensionedScalar("neg", dimless, -1.0)
+    "phi",
+    linearInterpolate(rho*U) & mesh.Sf()
 );
 
+surfaceScalarField phiRhof
+(
+    "phiRhof",
+    linearInterpolate(rho)*phi
+);
 
-surfaceScalarField phi("phi", mesh.Sf() & fvc::interpolate(rhoU));
+Switch implicitDiffusion (thermo.implicitDiffusion());
 
 Info<< "Creating turbulence model\n" << endl;
-autoPtr<compressible::turbulenceModel> turbulence
+turbulence.reset
 (
     compressible::turbulenceModel::New
     (
         rho,
         U,
-        phi,
+        phiRhof,
         thermo
-    )
+    ).ptr()
 );
+
+#include "createZeroSources.H"
+
+//
+//END-OF-FILE
+//
+
