@@ -1,4 +1,4 @@
-Info<< "Reading thermophysical properties\n" << endl;
+Info << "Reading thermophysical properties\n" << endl;
 
 autoPtr<rhoQGDThermo> pThermo
 (
@@ -11,12 +11,8 @@ volScalarField& e = thermo.he();
 
 volScalarField& p = thermo.p();
 const volScalarField& T = thermo.T();
-const volScalarField& hQGD = thermo.hQGD();
-const volScalarField& tauQGD = thermo.tauQGD();
-//const volScalarField& beta = thermo.beta();
-//const volScalarField& gamma = thermo.gamma();
-//const volScalarField& c = thermo.c();
-//const volScalarField& psi = thermo.psi();
+const surfaceScalarField& hQGDf = thermo.hQGDf();
+const surfaceScalarField& tauQGDf = thermo.tauQGDf();
 
 Info << "Thermo corrected" << endl;
 
@@ -34,7 +30,6 @@ volVectorField U
     ),
     mesh
 );
-
 
 volScalarField rho
 (
@@ -54,16 +49,19 @@ volVectorField W
     IOobject
     (
         "W",
-	runTime.timeName(),
-	mesh,
-	IOobject::NO_READ,
-	IOobject::NO_WRITE
+        runTime.timeName(),
+        mesh,
+        IOobject::NO_READ,
+        IOobject::NO_WRITE
     ),
     U
 );
 
-Info<< "\nReading gravitationalProperties" << endl;
-  
+
+
+
+Info << "\nReading gravitationalProperties" << endl;
+
 IOdictionary gravitationalProperties
 (
     IOobject
@@ -81,7 +79,7 @@ const dimensionedVector g(gravitationalProperties.lookup("g"));
 dimensionedScalar beta
 (
     "beta",
-    dimless/dimTemperature,
+    dimless / dimTemperature,
     thermo.subDict("mixture").subDict("transport")
 );
 
@@ -107,19 +105,25 @@ surfaceScalarField phi
 volVectorField BdFrc
 (
     "BdFrc",
-    T*g*beta
+    T* g* beta
 );
 
 Switch implicitDiffusion (thermo.implicitDiffusion());
 
-Info<< "Creating turbulence model\n" << endl;
+surfaceScalarField phiRhof
+(
+    "phiRhof",
+    linearInterpolate(rho)*phi
+);
+
+Info << "Creating turbulence model\n" << endl;
 turbulence.reset
 (
     compressible::turbulenceModel::New
     (
         rho,
         U,
-        phi,
+        phiRhof,
         thermo
     ).ptr()
 );
@@ -127,6 +131,8 @@ turbulence.reset
 label pRefCell = 0;
 scalar pRefValue = 0.0;
 setRefCell(p, mesh.solutionDict().subDict("PISO"), pRefCell, pRefValue);
+
+#include "createIcoZeroSources.H"
 
 //
 //END-OF-FILE
