@@ -21,7 +21,7 @@ jobs:
         # Branch to track
         head: exper/digitef-dev-1912 # optional, default is master
         # Branch to keep updated
-        base: exper/digitef-dev-1912 # optional, default is master
+        base: Dev-Optimization # optional, default is master
         # Merge method to use
         #merge_method: "merge" # optional, default is merge
         # The title of the pull request
